@@ -1,0 +1,16 @@
+# These sprites are stored as ordinary git blobs, not in LFS.
+#
+# The project's root .gitattributes routes *.png through LFS. That is the right default for
+# the imported art -- 4K terrain and skybox textures are megabytes each. These are not that:
+# eight generated shapes totalling about 25 KB, produced by HUDBuilder.cs and regenerable from
+# it at any time.
+#
+# The reason to exclude them is that nothing in this repository is in LFS yet. Every PNG in
+# HEAD is a plain blob, so committing these as pointers would make them the first objects to
+# need an LFS endpoint on the remote -- a new dependency for the clone, the CI checkout and
+# anyone who fetches without git-lfs installed, bought for 25 KB. A repository where some
+# images silently need extra tooling and most do not is worse than either consistent choice.
+#
+# '!' unsets an attribute the root file's [attr]lfs macro set, rather than trying to override
+# it with a different value.
+*.png !filter !diff !merge -text

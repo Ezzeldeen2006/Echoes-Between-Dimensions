@@ -63,6 +63,20 @@ public class Minimap : MonoBehaviour
             {
                 container.SetActive(visible);
             }
+
+            /*
+             * The CAMERA is switched off too, not just the widget.
+             *
+             * Hiding the UI alone would leave a second camera rendering the world into a
+             * RenderTexture that nothing samples -- a full extra render pass, every frame,
+             * producing an image no one can see. On the WebGL build that is the difference
+             * between the M key saving performance and it costing exactly as much as before
+             * while appearing to help.
+             */
+            if (minimapCamera != null)
+            {
+                minimapCamera.enabled = visible;
+            }
         }
 
         if (!visible || player == null)
