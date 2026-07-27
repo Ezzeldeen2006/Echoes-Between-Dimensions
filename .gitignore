@@ -105,3 +105,7 @@ InitTestScene*.unity*
 
 # Auto-generated scenes by play mode tests
 /[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
+
+# Written by Tools > Echoes > Render a HUD preview. A screenshot of the UI, regenerable in
+# one command -- committing it would put a 55 KB binary in history every time the HUD moves.
+/HUDPreview.png
