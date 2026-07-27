@@ -702,6 +702,27 @@ public static class WebGLOptimizer
 
         Debug.Log($"[WebGLOptimizer] building {scenes.Length} scene(s) to {output}");
 
+        /*
+         * Force a release build, explicitly, every time.
+         *
+         * The first attempt at this project died in the WASM linker with "Allocation failed" --
+         * wasm-ld running out of memory. Two things fed that. One was other processes holding
+         * RAM; the other is that these settings are EDITOR state, not project state. They live
+         * in Library/, they are whatever the last person to touch the Build Settings window
+         * left them as, and they are not in version control -- so a build can fail on one
+         * machine and succeed on another for a reason that appears in no diff.
+         *
+         * A development build keeps every symbol the linker must resolve and hold in memory at
+         * once. On a project this size -- 219 MB of source textures plus the whole URP shader
+         * set -- that is the difference between linking and not.
+         *
+         * Set here rather than in ApplyPlayerSettings because it is a property of THIS build
+         * rather than of the project, and a shipping web build is never a debug build.
+         */
+        EditorUserBuildSettings.development = false;
+        EditorUserBuildSettings.allowDebugging = false;
+        PlayerSettings.WebGL.debugSymbolMode = WebGLDebugSymbolMode.Off;
+
         // See StripTerrainNormalMaps: without this the terrain shader does not compile on
         // ANGLE D3D11 and the ground is simply absent. Restored in the finally below whatever
         // happens, so the project is never left modified.

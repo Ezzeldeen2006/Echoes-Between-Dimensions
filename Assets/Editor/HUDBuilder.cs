@@ -529,6 +529,18 @@ public static class HUDBuilder
         importer.mipmapEnabled = false;
         importer.filterMode = FilterMode.Bilinear;
         importer.wrapMode = TextureWrapMode.Clamp;
+
+        /*
+         * Cap at the size actually drawn, rather than leaving Unity's 2048 default.
+         *
+         * Unity never upscales, so a 128px file imported with maxTextureSize 2048 still ships
+         * 128px -- the default is harmless to the build. It is not harmless to the texture
+         * budget report, which estimates payload from maxTextureSize and so listed all eight
+         * of these as 4 MB each: 32 MB of imaginary textures sitting at the top of the "20
+         * largest" list, above every real one. A report whose worst offenders are fictional is
+         * a report nobody will read twice.
+         */
+        importer.maxTextureSize = Mathf.Max(width, height);
         importer.SaveAndReimport();
 
         return AssetDatabase.LoadAssetAtPath<Sprite>(path);

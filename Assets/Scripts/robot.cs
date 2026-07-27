@@ -36,6 +36,14 @@ public class robot : MonoBehaviour
     // a frame, per robot, forever.
     private Transform _tf;
 
+    // Roughly chest height on the player capsule. Where a line-of-sight test should aim: at
+    // the feet it is blocked by every step, at the head it clears cover the player is behind.
+    private const float PlayerChestHeight = 1.2f;
+
+    // Set when a patrol destination is issued, cleared once the agent has actually taken the
+    // path. See Patrol() for the bug this exists to prevent.
+    private bool _awaitingPatrolPath;
+
     private void Awake()
     {
         _agent = GetComponent<NavMeshAgent>();
@@ -115,8 +123,12 @@ public class robot : MonoBehaviour
     //ai generated
     private void EnterSleep()
     {
+        // Same reason as EnterAttack: a wake timer left running would wake a robot that has
+        // just gone back to sleep, with no player anywhere near it.
+        CancelInvoke(nameof(EnterChase));
+
         _state = RobotState.Sleeping;
-        _agent.isStopped = true;
+        SetAgentStopped(true);
         _anim.SetBool("IsAwake", false);
         _anim.SetBool("IsChasing", false);
         _anim.SetBool("IsAttacking", false);
@@ -126,7 +138,7 @@ public class robot : MonoBehaviour
     private void EnterWake()
     {
         _state = RobotState.Chasing;
-        _agent.isStopped = true;
+        SetAgentStopped(true);
         _anim.SetBool("IsChasing", false);
         _anim.SetBool("IsAttacking", false);
         _anim.SetBool("IsAwake", true);
@@ -140,7 +152,7 @@ public class robot : MonoBehaviour
     private void EnterChase()
     {
         _state = RobotState.Chasing;
-        _agent.isStopped = false;
+        SetAgentStopped(false);
         _timeSinceLostPlayer = 0f;
         _anim.SetBool("IsAttacking", false);
         _anim.SetBool("IsChasing", true);
@@ -148,8 +160,23 @@ public class robot : MonoBehaviour
     //ai generated
     private void EnterAttack()
     {
+        /*
+         * Cancel the wake timer.
+         *
+         * EnterWake schedules EnterChase 1.2s out, to hold the robot still while its opening
+         * animation plays. If the player closes to attack range inside that window -- which is
+         * exactly what happens when you wake a robot at point-blank range -- the robot enters
+         * Attacking, and then the timer fires anyway and drags it back to Chasing. Update
+         * immediately sees it is still in range and calls EnterAttack again, so the attack
+         * animation restarts from frame one and the first shot is thrown away.
+         *
+         * It reads as the robot flinching, and only when you surprise one up close, which is
+         * the hardest kind of bug to reproduce on purpose.
+         */
+        CancelInvoke(nameof(EnterChase));
+
         _state = RobotState.Attacking;
-        _agent.isStopped = true;
+        SetAgentStopped(true);
         _anim.SetBool("IsChasing", false);
         _anim.SetBool("IsAttacking", true);
     }
@@ -157,7 +184,7 @@ public class robot : MonoBehaviour
     private void EnterPatrol()
     {
         _state = RobotState.Patrolling;
-        _agent.isStopped = false;
+        SetAgentStopped(false);
         _isWaiting = false;
         _patrolTimer = 0f;
         _timeSinceLostPlayer = 0f;
@@ -169,15 +196,39 @@ public class robot : MonoBehaviour
     private void Patrol()
     {
         if (_isWaiting) return;
-        if (_agent.pathPending) return; 
-        if (_agent.remainingDistance <= stopAtDistance)
+        if (_agent.pathPending) return;
+
+        /*
+         * <b>The patrol-point skip.</b>
+         *
+         * remainingDistance is 0 for the frames between SetDestination and the agent actually
+         * holding the new path -- pathPending covers the calculation, but not the frame after
+         * it completes and before the path is adopted. So "have I arrived?" answered YES
+         * immediately after being told where to go, and the robot walked its entire patrol
+         * route standing still: point 1 reached, wait, point 2 reached, wait, point 3 reached.
+         * From the player's side a patrolling robot simply never patrols.
+         *
+         * hasPath is the missing half. Once a real path exists the distance means something;
+         * until then this waits. The velocity term catches the other end -- an agent that has
+         * consumed its path and stopped has hasPath false again, and without it a robot that
+         * genuinely arrived would never trigger the wait.
+         */
+        if (_awaitingPatrolPath)
+        {
+            if (!_agent.hasPath) return;
+            _awaitingPatrolPath = false;
+        }
+
+        bool arrived = _agent.remainingDistance <= stopAtDistance
+                       && (!_agent.hasPath || _agent.velocity.sqrMagnitude < 0.01f);
+        if (arrived)
             StartCoroutine(WaitAtPatrolPoint());
     }
     //ai generated
     private IEnumerator WaitAtPatrolPoint()
     {
         _isWaiting = true;
-        _agent.isStopped = true;
+        SetAgentStopped(true);
         _anim.SetBool("IdleF", true);
 
         yield return new WaitForSeconds(patrolWaitTime);
@@ -189,22 +240,70 @@ public class robot : MonoBehaviour
         }
 
         _anim.SetBool("IdleF", false);
-        _agent.isStopped = false;
+        SetAgentStopped(false);
         GoToNextPatrolPoint();
         _isWaiting = false;
     }
     //ai generated
     private void GoToNextPatrolPoint()
     {
-        if (patrolPoints.Length == 0) return;
+        if (patrolPoints == null || patrolPoints.Length == 0) return;
+        if (!CanNavigate()) return;
+
         _agent.SetDestination(patrolPoints[_currentPatrolIndex].position);
+        _awaitingPatrolPath = true;
         _currentPatrolIndex = (_currentPatrolIndex + 1) % patrolPoints.Length;
     }
     //ai generated
     private void FollowPlayer()
     {
+        if (!CanNavigate()) return;
         _agent.SetDestination(player.position);
     }
+
+    /// <summary>
+    /// Starts and stops the agent, safely.
+    ///
+    /// <para>Writing <c>isStopped</c> on an agent that is not on the NavMesh throws the same
+    /// per-frame error as SetDestination. Start() calls EnterSleep on the first frame, before
+    /// anything has had a chance to notice the agent is misplaced, so that path is the most
+    /// likely one of all to hit it -- one badly-placed robot, and the console is unusable from
+    /// the moment you press play.</para>
+    /// </summary>
+    private void SetAgentStopped(bool stopped)
+    {
+        if (!CanNavigate()) return;
+        _agent.isStopped = stopped;
+    }
+
+    /// <summary>
+    /// Whether this agent can be given a destination at all.
+    ///
+    /// <para>SetDestination on an agent that is not on the NavMesh does not fail quietly -- it
+    /// logs an error <b>every frame</b>, from every affected robot. A handful of them off the
+    /// mesh fills the console faster than anything else can be read, which is how a single
+    /// misplaced robot turns into "the NavMesh is broken": the real errors are still there,
+    /// several thousand lines up.</para>
+    ///
+    /// <para>An agent lands off the mesh easily -- placed slightly inside geometry, or on a
+    /// part of the level that was not baked. Checking is one property read, and it converts a
+    /// flood into a single line naming the object.</para>
+    /// </summary>
+    private bool CanNavigate()
+    {
+        if (_agent == null || !_agent.isActiveAndEnabled) return false;
+        if (_agent.isOnNavMesh) return true;
+
+        if (!_warnedOffMesh)
+        {
+            _warnedOffMesh = true;
+            Debug.LogWarning($"[robot] '{name}' is not on the NavMesh, so it cannot move. " +
+                             "Check it is inside the baked area and above the ground.", this);
+        }
+        return false;
+    }
+
+    private bool _warnedOffMesh;
     //ai generated
     private void Attack()
     {
@@ -236,8 +335,24 @@ public class robot : MonoBehaviour
     //ai generated
     private bool CanSeePlayer()
     {
-        Vector3 origin = _tf.position;
-        Vector3 dirToPlayer = player.position - origin;
+        /*
+         * Cast from EYE height at both ends, not from the floor.
+         *
+         * Both transforms sit at ground level, so the original cast a ray along the ground
+         * from the robot's feet to the player's feet. Every kerb, dock plank, step and slope
+         * on the level is then a sight blocker: the robot loses the player while looking
+         * straight at them, waits out losePlayerTime, and wanders off to patrol. That is most
+         * of "the robots react oddly" -- the state machine was working perfectly on a
+         * line-of-sight test that was wrong.
+         *
+         * The agent's own height is used for the robot end rather than a hardcoded number, so
+         * this stays correct if the robot is ever rescaled. The player end is a constant,
+         * because a CharacterController's position is its centre-bottom and chest height is
+         * what a shooter should be sighting on.
+         */
+        float robotEye = _agent != null ? _agent.height * 0.65f : 1f;
+        Vector3 origin = _tf.position + Vector3.up * robotEye;
+        Vector3 dirToPlayer = (player.position + Vector3.up * PlayerChestHeight) - origin;
 
         /*
          * One square root instead of two.
