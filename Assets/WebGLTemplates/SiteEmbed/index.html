@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!-- This page only ever exists inside an iframe on a project page; it should never be a
+         search result of its own. -->
+    <meta name="robots" content="noindex">
+    <title>{{{ PRODUCT_NAME }}}</title>
+    <link rel="stylesheet" href="TemplateData/style.css">
+  </head>
+  <body>
+    <!--
+      Replaces Unity's generated index.html.
+
+      The default template assumes the build owns a whole browser tab. It hardcodes the canvas
+      to 960x600 on desktop and centres it on a white page, so inside an 835x470 iframe the
+      canvas overflowed both axes: scrollbars appeared, the visible region was the middle of
+      the Unity splash, and everything around it was white. To a visitor that is a white
+      screen.
+
+      Three things changed, each fixing a distinct failure:
+
+        1. The canvas is sized in CSS to fill its container instead of 960x600 in JS. Unity
+           keeps the render target matched to the canvas's DOM size, so the game renders at
+           the embed's actual resolution rather than being cropped.
+
+        2. The page is the site's near-black, not white. No flash before the first frame.
+
+        3. Failures render into #unity-warning instead of calling alert(). The embed is a
+           sandboxed iframe WITHOUT allow-modals, so the browser blocks alert() silently --
+           the default template's error path was incapable of showing an error here at all.
+
+      This IS that template. Unity's preprocessor substitutes the triple-brace macros below
+      when it copies this into a build, so a rebuild produces an embeddable page rather than
+      the default one.
+
+      Do NOT write an example macro in prose here. The preprocessor evaluates the contents of
+      every triple-brace group as JavaScript -- including ones inside an HTML comment -- so a
+      placeholder written to illustrate the syntax fails the build with
+      'Preprocessor error "SyntaxError: Unexpected token (1:1)"'.
+    -->
+    <div id="unity-container">
+      <canvas id="unity-canvas" tabindex="-1"></canvas>
+
+      <div id="unity-loading-bar">
+        <div id="unity-loading-label">Loading</div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+      </div>
+
+      <div id="unity-warning" role="alert"></div>
+    </div>
+
+    <script>
+      var canvas = document.querySelector("#unity-canvas");
+      var warning = document.querySelector("#unity-warning");
+      var loadingBar = document.querySelector("#unity-loading-bar");
+
+      function showMessage(msg, type) {
+        if (type === "error") {
+          loadingBar.style.display = "none";
+          warning.style.display = "block";
+          warning.textContent = msg;
+        }
+      }
+
+      var buildUrl = "Build";
+      var config = {
+        arguments: [],
+        dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",
+        frameworkUrl: buildUrl + "/{{{ FRAMEWORK_FILENAME }}}",
+        codeUrl: buildUrl + "/{{{ CODE_FILENAME }}}",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "{{{ COMPANY_NAME }}}",
+        productName: "{{{ PRODUCT_NAME }}}",
+        productVersion: "{{{ PRODUCT_VERSION }}}",
+        showBanner: showMessage,
+      };
+
+      loadingBar.style.display = "block";
+
+      var script = document.createElement("script");
+      script.src = buildUrl + "/{{{ LOADER_FILENAME }}}";
+
+      // The loader failing to load is a separate case from the instance failing, and the
+      // default template handled neither visibly. A 404 on the loader left the page blank
+      // forever with the progress bar stuck at zero and nothing in the console.
+      script.onerror = function () {
+        showMessage("Could not load the game files. Try reloading the page.", "error");
+      };
+
+      script.onload = function () {
+        createUnityInstance(canvas, config, function (progress) {
+          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
+        }).then(function (unityInstance) {
+          loadingBar.style.display = "none";
+          window.unityInstance = unityInstance;
+        }).catch(function (message) {
+          // NOT alert(). See above -- a sandboxed iframe blocks it silently, which is how a
+          // hard failure became an unexplained blank frame.
+          showMessage(String(message), "error");
+        });
+      };
+
+      document.body.appendChild(script);
+    </script>
+  </body>
+</html>

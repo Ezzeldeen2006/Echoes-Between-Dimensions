@@ -1,0 +1,103 @@
+/*
+ * Replaces Unity's default WebGL template stylesheet.
+ *
+ * The default is written for a build that OWNS the whole browser tab: a white body, and a
+ * canvas at a hardcoded 960x600 centred by absolute positioning. Inside this site's embed the
+ * iframe viewport is 835x470, so the canvas overflowed it in both directions -- producing
+ * scrollbars, a white surround, and a view cropped to the middle of the Unity splash screen.
+ * That is what "white screen" actually was.
+ *
+ * Everything here exists to make the build fill whatever box it is given, in the site's
+ * colours, with no scrollbars.
+ */
+
+html, body {
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  /* Matches --color-void on the site, so the iframe never flashes white before the first
+     frame renders -- which was most of what was visible. */
+  background: #0a0b0e;
+  /* The canvas is sized to exactly this box, so a scrollbar can only mean the render target
+     and the visible area have diverged. */
+  overflow: hidden;
+}
+
+#unity-container {
+  position: absolute;
+  inset: 0;
+}
+
+#unity-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #0a0b0e;
+  /* Unity resizes the render target to the canvas's DOM size (matchWebGLToCanvasSize is on by
+     default), so a percentage here is genuinely responsive rather than a stretched bitmap. */
+}
+
+/* The default template's footer -- Unity wordmark, build title, fullscreen button -- is gone
+   from the markup rather than hidden: 38px of chrome inside a 470px embed is a meaningful
+   fraction of the game. Fullscreen is offered by the page around the iframe instead. */
+
+#unity-loading-bar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: none;
+  text-align: center;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: #a8adba;
+}
+
+#unity-loading-label {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+
+#unity-progress-bar-empty {
+  width: 220px;
+  height: 4px;
+  border-radius: 999px;
+  background: #242835;
+  overflow: hidden;
+}
+
+#unity-progress-bar-full {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f0a53a, #9d84f5);
+  transition: width 0.2s ease-out;
+}
+
+/*
+ * Errors render HERE, in the page, instead of through alert().
+ *
+ * The default template calls alert() when createUnityInstance rejects. This runs in a
+ * sandboxed iframe without allow-modals, so the browser blocks that alert SILENTLY -- a
+ * failed load produced a blank frame and no message anywhere, in the page or the console.
+ * Any failure now has somewhere visible to land.
+ */
+#unity-warning {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 30rem;
+  padding: 18px 22px;
+  border-radius: 12px;
+  border: 1px solid #48262c;
+  background: #2b171b;
+  color: #f4f5f7;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  text-align: center;
+  display: none;
+}

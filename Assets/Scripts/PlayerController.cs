@@ -15,6 +15,12 @@ public class PlayerController : MonoBehaviour
     private bool isJumping;
     public float jumpForce = 5f;
     private PlayerHealth health;
+
+    // Cached in Awake. `cam.transform` and `transform` are native property calls, and between
+    // HandleMovement and OnAnimatorMove they were read five times every frame.
+    private Transform camTransform;
+    private Transform tf;
+
     private void Awake()
     {
         playerActions = new PlayerInputActions();
@@ -22,6 +28,10 @@ public class PlayerController : MonoBehaviour
         animator = GetComponent<Animator>();
         controller = GetComponent<CharacterController>();
         health = GetComponent<PlayerHealth>();
+        tf = transform;
+
+        if (cam != null)
+            camTransform = cam.transform;
     }
 
     void Update()
@@ -66,8 +76,8 @@ public class PlayerController : MonoBehaviour
 
         Vector2 input = playerActions.Player.Movement.ReadValue<Vector2>();
 
-        Vector3 camForward = cam.transform.forward;
-        Vector3 camRight = cam.transform.right;
+        Vector3 camForward = camTransform.forward;
+        Vector3 camRight = camTransform.right;
         camForward.y = 0; camForward.Normalize();
         camRight.y = 0; camRight.Normalize();
 
@@ -77,7 +87,7 @@ public class PlayerController : MonoBehaviour
         if (isWalking)
         {
             Quaternion lookRot = Quaternion.LookRotation(movement);
-            transform.rotation = Quaternion.Slerp(transform.rotation, lookRot, rotationSpeed * Time.deltaTime);
+            tf.rotation = Quaternion.Slerp(tf.rotation, lookRot, rotationSpeed * Time.deltaTime);
         }
 
         if (isWalking)
@@ -103,9 +113,9 @@ public class PlayerController : MonoBehaviour
         {
             Vector2 input = playerActions.Player.Movement.ReadValue<Vector2>();
 
-            Vector3 camForward = cam.transform.forward;
+            Vector3 camForward = camTransform.forward;
             camForward.y = 0; camForward.Normalize();
-            Vector3 camRight = cam.transform.right;
+            Vector3 camRight = camTransform.right;
             camRight.y = 0; camRight.Normalize();
 
             Vector3 airMove = camForward * input.y + camRight * input.x;
@@ -115,9 +125,28 @@ public class PlayerController : MonoBehaviour
         }
     }
 
+    /*
+     * Releases the cursor on focus loss; no longer grabs it on focus gain.
+     *
+     * The same single line was what made AtomBall's WebGL build render a blank screen. On
+     * load Unity raises OnApplicationFocus(true); asking for pointer lock there is a request
+     * with no user gesture behind it, which every browser rejects with "NotAllowedError: A
+     * user gesture is required to request Pointer Lock." Unity's WebGL runtime treats that
+     * rejection as fatal, aborts, and calls loseContext() -- and a lost WebGL context never
+     * draws again. The game loads, reports nothing wrong, and shows black.
+     *
+     * MainMenu.cs locks the cursor from a button handler, which IS a user gesture, so that
+     * path was always fine and is left alone. This one fires without any input at all.
+     *
+     * Fixed here as well as in AtomBall, before this project is built for the web, rather
+     * than after rediscovering the same blank screen from the other end.
+     */
     private void OnApplicationFocus(bool focus)
     {
-        Cursor.lockState = focus ? CursorLockMode.Locked : CursorLockMode.None;
+        if (!focus)
+        {
+            Cursor.lockState = CursorLockMode.None;
+        }
     }
     private void OnControllerColliderHit(ControllerColliderHit hit)
     {

@@ -19,11 +19,8 @@ public class GunSystem : MonoBehaviour
         playerAction.Enable();
         item= GetComponent<ItemHolder>();
     }
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
-    void Start()
-    {
-        
-    }
+    // The empty Start() was removed -- Unity calls every message it finds, so an empty one
+    // costs a dispatch for nothing and implies start-up work that does not exist.
 
     // Update is called once per frame
     void Update()

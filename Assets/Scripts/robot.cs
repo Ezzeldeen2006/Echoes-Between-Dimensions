@@ -27,10 +27,23 @@ public class robot : MonoBehaviour
     private float _patrolTimer;
     private float _fireTimer;
 
+    // Ranges pre-squared once, so the per-frame distance check never needs a square root.
+    // See Update() for why that is exact rather than an approximation.
+    private float _detectionRangeSqr;
+    private float _attackRangeSqr;
+
+    // transform is a native property call, not a field. This script touches it several times
+    // a frame, per robot, forever.
+    private Transform _tf;
+
     private void Awake()
     {
         _agent = GetComponent<NavMeshAgent>();
         _anim = GetComponent<Animator>();
+        _tf = transform;
+
+        _detectionRangeSqr = detectionRange * detectionRange;
+        _attackRangeSqr = attackRange * attackRange;
     }
 
     private void Start()
@@ -42,13 +55,24 @@ public class robot : MonoBehaviour
     {
         if (player == null)
             return;
-        float dist = Vector3.Distance(player.position, transform.position);
+
+        /*
+         * Squared distance, not Vector3.Distance.
+         *
+         * Distance() takes a square root, and every use of it here is a COMPARISON against a
+         * fixed range. Comparing squared values gives an identical answer for every input --
+         * squaring is monotonic for non-negative numbers, and distances are never negative --
+         * so this is not an approximation, it is the same test without the sqrt. One robot
+         * saves one square root per frame; a room of them saves one each, every frame, for
+         * the whole session.
+         */
+        float distSqr = (player.position - _tf.position).sqrMagnitude;
         _fireTimer += Time.deltaTime;
         //ai generated
         switch (_state)
         {
             case RobotState.Sleeping:
-                if (dist <= detectionRange && CanSeePlayer())
+                if (distSqr <= _detectionRangeSqr && CanSeePlayer())
                     EnterWake();
                 break;
 
@@ -57,13 +81,13 @@ public class robot : MonoBehaviour
                 _patrolTimer += Time.deltaTime;
                 if (_patrolTimer >= patrolTimeLimit)
                     EnterSleep();
-                if (dist <= detectionRange && CanSeePlayer())
+                if (distSqr <= _detectionRangeSqr && CanSeePlayer())
                     EnterWake();
                 break;
 
             case RobotState.Chasing:
                 FollowPlayer();
-                if (dist <= attackRange)
+                if (distSqr <= _attackRangeSqr)
                 {
                     EnterAttack();
                 }
@@ -81,7 +105,7 @@ public class robot : MonoBehaviour
 
             case RobotState.Attacking:
                 Attack();
-                if (dist > attackRange)
+                if (distSqr > _attackRangeSqr)
                     EnterChase();
                 break;
         }
@@ -106,7 +130,11 @@ public class robot : MonoBehaviour
         _anim.SetBool("IsChasing", false);
         _anim.SetBool("IsAttacking", false);
         _anim.SetBool("IsAwake", true);
-        Invoke("EnterChase", 1.2f);
+        // nameof rather than the string literal "EnterChase". Identical at runtime -- Invoke
+        // still resolves by name -- but the compiler now checks it. The string version fails
+        // SILENTLY if the method is ever renamed: the robot wakes, plays its wake animation,
+        // and then simply never starts chasing, with nothing in the console to say why.
+        Invoke(nameof(EnterChase), 1.2f);
     }
     //ai generated
     private void EnterChase()
@@ -180,10 +208,10 @@ public class robot : MonoBehaviour
     //ai generated
     private void Attack()
     {
-        Vector3 dir = player.position - transform.position;
+        Vector3 dir = player.position - _tf.position;
         dir.y = 0f;
         if (dir.sqrMagnitude > 0.001f)
-            transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(dir), 8f * Time.deltaTime);
+            _tf.rotation = Quaternion.Slerp(_tf.rotation, Quaternion.LookRotation(dir), 8f * Time.deltaTime);
 
         if (_fireTimer >= 1f)
         {
@@ -208,8 +236,29 @@ public class robot : MonoBehaviour
     //ai generated
     private bool CanSeePlayer()
     {
-        Vector3 dirToPlayer = player.position - transform.position;
-        if (Physics.Raycast(transform.position, dirToPlayer.normalized, out RaycastHit hit, dirToPlayer.magnitude))
+        Vector3 origin = _tf.position;
+        Vector3 dirToPlayer = player.position - origin;
+
+        /*
+         * One square root instead of two.
+         *
+         * `.normalized` computes the magnitude and divides by it; `.magnitude` then computes
+         * it a second time. Taking the length once and dividing by hand gives exactly the
+         * same direction and the same distance, at half the cost -- and this is called from
+         * Update in three of the four states.
+         *
+         * The zero-length guard is not paranoia: `.normalized` returns a zero vector for a
+         * zero-length input rather than dividing by zero, so the original silently cast a ray
+         * with no direction if the robot and player ever occupied the same point. Handled
+         * explicitly here -- standing inside the robot obviously counts as seeing it.
+         */
+        float distance = dirToPlayer.magnitude;
+        if (distance < 0.0001f)
+            return true;
+
+        Vector3 direction = dirToPlayer / distance;
+
+        if (Physics.Raycast(origin, direction, out RaycastHit hit, distance))
             return hit.transform == player;
         return true;
     }
