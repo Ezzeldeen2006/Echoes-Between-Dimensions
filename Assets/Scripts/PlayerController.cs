@@ -15,6 +15,7 @@ public class PlayerController : MonoBehaviour
     private bool isJumping;
     public float jumpForce = 5f;
     private PlayerHealth health;
+    private ItemHolder itemHolder;
 
     // Cached in Awake. `cam.transform` and `transform` are native property calls, and between
     // HandleMovement and OnAnimatorMove they were read five times every frame.
@@ -28,6 +29,7 @@ public class PlayerController : MonoBehaviour
         animator = GetComponent<Animator>();
         controller = GetComponent<CharacterController>();
         health = GetComponent<PlayerHealth>();
+        itemHolder = GetComponent<ItemHolder>();
         tf = transform;
 
         if (cam != null)
@@ -60,7 +62,9 @@ public class PlayerController : MonoBehaviour
             animator.SetBool("IsGrounded", false);
         }
 
-        if (playerActions.Player.Jump.WasPressedThisFrame() && controller.isGrounded)
+        bool pickingUp = itemHolder != null && itemHolder.IsPickingUp();
+
+        if (playerActions.Player.Jump.WasPressedThisFrame() && controller.isGrounded && !pickingUp)
         {
             yVelocity = jumpForce;
             isJumping = true;
@@ -74,7 +78,18 @@ public class PlayerController : MonoBehaviour
             animator.SetBool("IsJumping", false);
         }
 
-        Vector2 input = playerActions.Player.Movement.ReadValue<Vector2>();
+        /*
+         * Input is zeroed while a pickup animation plays, rather than the script being
+         * disabled.
+         *
+         * Disabling PlayerController would also stop OnAnimatorMove, and the pickup animations
+         * are ROOT MOTION -- the crouch moves the character. Killing that would make the
+         * player stand rooted while the animation slides underneath them. Zeroing the input
+         * leaves the animation fully in charge of movement, which is what root motion means.
+         */
+        Vector2 input = (itemHolder != null && itemHolder.IsPickingUp())
+            ? Vector2.zero
+            : playerActions.Player.Movement.ReadValue<Vector2>();
 
         Vector3 camForward = camTransform.forward;
         Vector3 camRight = camTransform.right;
@@ -111,7 +126,9 @@ public class PlayerController : MonoBehaviour
         }
         else
         {
-            Vector2 input = playerActions.Player.Movement.ReadValue<Vector2>();
+            Vector2 input = (itemHolder != null && itemHolder.IsPickingUp())
+                ? Vector2.zero
+                : playerActions.Player.Movement.ReadValue<Vector2>();
 
             Vector3 camForward = camTransform.forward;
             camForward.y = 0; camForward.Normalize();

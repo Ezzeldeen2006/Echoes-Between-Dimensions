@@ -71,6 +71,26 @@ public class CameraController : MonoBehaviour
         }
 
     }
+
+    /// <summary>
+    /// Leaves first person from outside this script. Used when the player dies.
+    ///
+    /// <para>The professor recorded this as "Dying while in FPS mode is buggy" and docked a
+    /// mark. Death disabled the player controller but left the CAMERA in first person with the
+    /// held item still on screen, so dying mid-aim showed a floating gun in front of a
+    /// viewpoint that could no longer move -- and releasing aim then revealed the body lying
+    /// dead. Two contradictory states at once.</para>
+    ///
+    /// <para>A separate public method rather than just making ThirdPersonMode public, because
+    /// the culling mask matters as much as the camera: first person hides the player's own body
+    /// so the camera does not sit inside it, and a corpse you cannot see is not much of a
+    /// death.</para>
+    /// </summary>
+    public void ForceThirdPerson()
+    {
+        ThirdPersonMode();
+    }
+
     private void OnDestroy()
     {
         playerActions.Disable();

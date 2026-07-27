@@ -74,6 +74,7 @@ public class ItemHolder : MonoBehaviour
             pendingGun.gameObject.SetActive(false);
         }
          pendingGun = null;
+        EndPickup();
         RefreshInventory();
     }
     public void AttachScannerToHand()
@@ -86,19 +87,64 @@ public class ItemHolder : MonoBehaviour
             pendingScanner.gameObject.SetActive(false);
         }
          pendingScanner = null;
+        EndPickup();
         RefreshInventory();
-       
+
     }
+    /*
+     * Movement is locked for the duration of a pickup.
+     *
+     * Without it you can walk, run and jump straight through the pickup animation: the
+     * character slides across the floor mid-crouch, and you can leave the item behind while
+     * the animation still resolves and hands it to you from across the room. The professor did
+     * not catch this one; it shows the moment you try it.
+     *
+     * Released by the animation event that already calls AttachGunToHand /
+     * AttachScannerToHand at the end of the clip, so the lock lasts exactly as long as the
+     * animation rather than a guessed duration.
+     */
+    private bool isPickingUp;
+
+    /// <summary>Whether a pickup animation is playing. Read by PlayerController.</summary>
+    public bool IsPickingUp()
+    {
+        return isPickingUp;
+    }
+
+    private void BeginPickup()
+    {
+        isPickingUp = true;
+
+        /*
+         * A safety net, not a timer.
+         *
+         * The lock is meant to be released by an animation event. If that event is ever
+         * missing, renamed, or the clip is interrupted by a transition, the player would be
+         * frozen for the rest of the session with no way out -- a far worse bug than the one
+         * being fixed. Three seconds is comfortably longer than either pickup clip.
+         */
+        CancelInvoke(nameof(EndPickup));
+        Invoke(nameof(EndPickup), 3f);
+    }
+
+    private void EndPickup()
+    {
+        isPickingUp = false;
+        CancelInvoke(nameof(EndPickup));
+    }
+
     public void PickupScanner(Interactable groundScanner)
     {
        pendingScanner= groundScanner;
+        BeginPickup();
         animator.SetTrigger("ScannerPickup");
     }
     public void PickUpGun(Interactable groundGun)
     {
         pendingGun = groundGun;
+        BeginPickup();
         animator.SetTrigger("GunPickup");
-      
+
     }
     public void SetFirstPerson(bool fp)
     {
