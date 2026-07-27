@@ -40,6 +40,24 @@ public class PlayerHealth : MonoBehaviour
         currentHp = maxHp;
         UpdateHealthUI();
     }
+    /// <summary>
+    /// Current hit points, for the HUD.
+    ///
+    /// <para>A read-only accessor rather than a public field: health is owned here, and the
+    /// HUD is a reader. A public field would let anything heal or kill the player as a side
+    /// effect, which is the sort of thing that turns a death into a bug report nobody can
+    /// reproduce.</para>
+    /// </summary>
+    public int CurrentHealth()
+    {
+        return currentHp;
+    }
+
+    public int MaxHealth()
+    {
+        return maxHp;
+    }
+
     public void TakeDmg(int dmg)
     {
         currentHp -= dmg;

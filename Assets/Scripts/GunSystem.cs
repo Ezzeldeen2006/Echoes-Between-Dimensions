@@ -13,6 +13,24 @@ public class GunSystem : MonoBehaviour
     private ItemHolder item;
     public GameObject gunCrossHair;
 
+    /*
+     * Read by the HUD's heat gauge (bonus task "d. Advanced UI").
+     *
+     * Exposed as accessors rather than by making the fields public: the heat is owned by this
+     * script and the UI is a reader. A public field would let any future script quietly cool
+     * the gun down, which is the kind of thing that turns an overheat mechanic into an
+     * intermittent bug nobody can reproduce.
+     */
+    public float HeatFraction()
+    {
+        return maxHeat <= 0f ? 0f : Mathf.Clamp01(currentHeat / maxHeat);
+    }
+
+    public bool IsOverHeated()
+    {
+        return isOverHeated;
+    }
+
     private void Awake()
     {
         playerAction = new PlayerInputActions();
