@@ -723,6 +723,40 @@ public static class WebGLOptimizer
         EditorUserBuildSettings.allowDebugging = false;
         PlayerSettings.WebGL.debugSymbolMode = WebGLDebugSymbolMode.Off;
 
+        /*
+         * Assert the embed template, rather than trusting that step 4 was run.
+         *
+         * This build came out with Unity's DEFAULT template, because BuildWebGL was run on its
+         * own and ApplyPlayerSettings sets the template. That is the precise cause of the
+         * white screen this project already spent a day on: the default hardcodes the canvas
+         * to 960x600 and centres it on a white page, so inside the site's 835x470 iframe the
+         * canvas overflows both axes and a visitor sees white with scrollbars. It also reports
+         * failures through alert(), which a sandboxed iframe blocks silently.
+         *
+         * The failure mode is what makes this worth enforcing here: the build SUCCEEDS. Nothing
+         * warns, the folder looks right, the size is right, and it is broken in a way only
+         * visible by loading it in a browser. A build step whose omission produces a
+         * successful-looking broken artefact should not be a separate menu item you remember.
+         */
+        const string embedTemplate = "PROJECT:SiteEmbed";
+        if (PlayerSettings.WebGL.template != embedTemplate)
+        {
+            Debug.Log($"[WebGLOptimizer] template was '{PlayerSettings.WebGL.template}' -- setting {embedTemplate}");
+            PlayerSettings.WebGL.template = embedTemplate;
+        }
+
+        if (!System.IO.Directory.Exists("Assets/WebGLTemplates/SiteEmbed"))
+        {
+            // Setting a template that does not exist does not fail -- Unity falls back to the
+            // default and carries on, which is how this would silently regress if the folder
+            // were ever renamed or lost in a merge.
+            Debug.LogError("[WebGLOptimizer] Assets/WebGLTemplates/SiteEmbed is missing. The build " +
+                           "would fall back to Unity's default template and render as a white screen " +
+                           "inside the site's iframe.");
+            EditorApplication.Exit(3);
+            return;
+        }
+
         // See StripTerrainNormalMaps: without this the terrain shader does not compile on
         // ANGLE D3D11 and the ground is simply absent. Restored in the finally below whatever
         // happens, so the project is never left modified.

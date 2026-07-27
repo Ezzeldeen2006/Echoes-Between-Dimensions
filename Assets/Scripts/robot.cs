@@ -56,7 +56,82 @@ public class robot : MonoBehaviour
 
     private void Start()
     {
+        EnsureAgentOnNavMesh();
         EnterSleep();
+    }
+
+    /// <summary>
+    /// Re-attaches the agent to the NavMesh if it failed to attach during scene load.
+    ///
+    /// <para><b>This is the actual "NavMesh bug".</b> The WebGL build logs
+    /// <i>"Failed to create agent because there is no valid NavMesh"</i> once per robot, and
+    /// an agent that fails that check never retries -- so every enemy in the build stands
+    /// still forever. The scene is fine: the NavMesh Surface object is active, its component
+    /// is enabled, and it references its baked data.</para>
+    ///
+    /// <para>It is an ORDERING problem. A NavMeshAgent attaches to the mesh in its own
+    /// <c>OnEnable</c>, and NavMeshSurface registers its baked data in <c>OnEnable</c> too.
+    /// Unity does not order those against each other, so whether the enemies work depends on
+    /// which component the scene loader happens to reach first -- which is why this can look
+    /// fine in the editor and be broken in a build, from identical files.</para>
+    ///
+    /// <para><c>Start</c> is the fix's leverage: Unity guarantees every <c>Awake</c> and
+    /// <c>OnEnable</c> in the scene has run before any <c>Start</c> does. So by the time this
+    /// runs the surface has definitely registered, and toggling the agent re-runs the attach
+    /// that failed. Cheap, and it does not depend on execution-order settings that live
+    /// outside version control.</para>
+    /// </summary>
+    private void EnsureAgentOnNavMesh()
+    {
+        if (_agent == null || !_agent.enabled) return;
+        if (_agent.isOnNavMesh) return;
+
+        // Toggling re-runs OnEnable, and with it the attach.
+        _agent.enabled = false;
+        _agent.enabled = true;
+
+        if (_agent.isOnNavMesh)
+        {
+            Debug.Log($"[robot] '{name}' attached to the NavMesh on retry -- the surface " +
+                      "had not registered its data when the agent first enabled.", this);
+            return;
+        }
+
+        /*
+         * Still not attached, so this is not a timing problem for this robot: it is standing
+         * somewhere the mesh does not cover. Snap it to the nearest point that is covered
+         * rather than leaving it inert.
+         *
+         * 5 units of search radius, not more. A robot that has to be dragged further than that
+         * was placed somewhere genuinely wrong, and silently teleporting it across the level
+         * would hide a level-design mistake instead of reporting one.
+         */
+        if (NavMesh.SamplePosition(_tf.position, out NavMeshHit hit, 5f, NavMesh.AllAreas)
+            && _agent.Warp(hit.position))
+        {
+            Debug.LogWarning($"[robot] '{name}' was off the NavMesh and has been moved " +
+                             $"{Vector3.Distance(_tf.position, hit.position):0.0} units onto it.", this);
+            return;
+        }
+
+        /*
+         * LogError, not LogWarning, and that is a deliberate severity choice rather than
+         * shouting.
+         *
+         * Reaching here means this enemy will never move for the whole session: the retry
+         * failed AND there is no NavMesh within 5 units to snap to. A robot that cannot
+         * path is not a degraded robot, it is a missing one, and the level is built around
+         * them chasing you. That is worth an error.
+         *
+         * It is also the only diagnostic that survives. A release WebGL build does not
+         * surface Debug.Log to the browser console the way the editor does -- the engine's
+         * own errors come through, which is how the "no valid NavMesh" lines were visible at
+         * all, but an ordinary Log may not. So an error here is the one signal that can
+         * distinguish "the retry fixed it" from "the retry did nothing", from outside the
+         * game, without a development build.
+         */
+        Debug.LogError($"[robot] '{name}' could not be attached to a NavMesh and will never move. " +
+                       "The surface's baked data did not load in this build.", this);
     }
 
     private void Update()
