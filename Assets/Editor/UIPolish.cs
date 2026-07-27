@@ -88,6 +88,48 @@ public static class UIPolish
     }
 
     /// <summary>
+    /// Turns Loop Time on for the tower activation clip.
+    ///
+    /// <para>The professor's note was "The animation is not looping correctly and it's a bit
+    /// underwhelming." The first half is not a subjective judgement -- it is a single unchecked
+    /// box. TowerAnimation.anim has <c>m_LoopTime: 0</c>, so the two-second clip plays once and
+    /// freezes on its last frame. An activated tower is supposed to keep turning.</para>
+    ///
+    /// <para>Set through AnimationUtility rather than by editing the YAML, because the clip's
+    /// settings are serialized in more than one place and hand-editing one of them produces an
+    /// asset the importer disagrees with.</para>
+    /// </summary>
+    [MenuItem("Tools/Echoes/2. Make the tower animation loop", priority = 2)]
+    public static void FixTowerAnimationLoop()
+    {
+        var guids = AssetDatabase.FindAssets("t:AnimationClip", new[] { "Assets/GameAssets/TowerAntenna" });
+        var changed = 0;
+
+        foreach (var guid in guids)
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guid);
+            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(path);
+            if (clip == null) continue;
+
+            var settings = AnimationUtility.GetAnimationClipSettings(clip);
+            if (settings.loopTime)
+            {
+                Debug.Log($"[UIPolish] {path} already loops");
+                continue;
+            }
+
+            settings.loopTime = true;
+            AnimationUtility.SetAnimationClipSettings(clip, settings);
+            EditorUtility.SetDirty(clip);
+            changed++;
+            Debug.Log($"[UIPolish] {path}: loopTime false -> true (length {clip.length:0.00}s)");
+        }
+
+        AssetDatabase.SaveAssets();
+        Debug.Log($"[UIPolish] tower animation: {changed} clip(s) set to loop.");
+    }
+
+    /// <summary>
     /// Reports what the UI currently looks like, so a change can be checked rather than assumed.
     /// </summary>
     [MenuItem("Tools/Echoes/0. Report UI state", priority = 0)]
