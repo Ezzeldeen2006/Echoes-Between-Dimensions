@@ -4,7 +4,22 @@ using UnityEngine.SceneManagement;
 
 public class PlayerHealth : MonoBehaviour
 {
-    private int maxHp = 3;
+    /*
+     * Five, not three.
+     *
+     * Three is the assignment's stated MINIMUM ("Minimum: 3 hits before death"), and it was
+     * being treated as the target. In a browser, on a keyboard the player has not warmed up on,
+     * against robots that hit for one each, three is over in seconds -- and the whole level
+     * restarts, so the cost of a mistake is the whole run. Five leaves room to misjudge one
+     * fight without turning the game into a retry loop, and still fits a readout you can count
+     * at a glance.
+     *
+     * Serialized so it can be tuned from the inspector without a code change. It used to be a
+     * bare private field, which meant the only way to alter the difficulty was to edit this
+     * line -- and the HUD hardcoded three plates to match, so the two could silently disagree.
+     * The HUD now builds one plate per point from MaxHealth().
+     */
+    [SerializeField] private int maxHp = 5;
     private int currentHp;
     public Slider healthSlider;
     private Animator animator;

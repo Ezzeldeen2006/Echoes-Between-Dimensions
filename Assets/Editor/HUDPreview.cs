@@ -61,6 +61,15 @@ public static class HUDPreview
         var previousAlpha = hud.inventoryGroup != null ? hud.inventoryGroup.alpha : 0f;
         var previousMinimapActive = minimap != null && minimap.container != null && minimap.container.activeSelf;
 
+        /*
+         * The HUD root is now built at alpha 0, because it is hidden until the player presses
+         * play. Nothing sets it back in edit mode -- GameHUD.Update does that at runtime -- so
+         * without forcing it here every preview from now on would be a photograph of an empty
+         * grey rectangle, and it would look exactly like the HUD having been broken by whatever
+         * change was being previewed.
+         */
+        var previousRootAlpha = hud.rootGroup != null ? hud.rootGroup.alpha : 1f;
+
         GameObject rig = null;
         RenderTexture target = null;
 
@@ -99,11 +108,54 @@ public static class HUDPreview
                 minimap.minimapCamera.Render();
             }
 
-            // One block spent, and the spent one tinted red -- what the display looks like the
-            // moment after taking a hit, which is the state it exists for.
-            if (hud.healthSegments != null && hud.healthSegments.Length == 3)
+            if (hud.rootGroup != null) hud.rootGroup.alpha = 1f;
+
+            /*
+             * Two hull plates of three, staged by hand.
+             *
+             * GameHUD.UpdateHealth does all of this at runtime, but Update does not run in edit
+             * mode, so the preview has to reproduce the state it wants to photograph. Two rather
+             * than three because the interesting half of this readout is what it does as it
+             * empties -- the amber escalation, the spent socket showing its hazard stripes, the
+             * bloom going with the plate. A picture of three full cyan plates would show none of
+             * it and would flatter the design by only ever depicting its easiest state.
+             */
+            var amber = new Color(0.98f, 0.72f, 0.24f);
+            var hostile = new Color(0.96f, 0.28f, 0.27f);
+
+            // Two plates spent, whatever the total is. Hardcoding "3" here broke the preview the
+            // moment maxHp moved to 5: the block simply did not run and the capture showed a
+            // full-health readout, which is the one state that demonstrates nothing.
+            var total = hud.healthSegments != null ? hud.healthSegments.Length : 0;
+            var remaining = Mathf.Max(1, total - 2);
+
+            if (total > 0)
             {
-                if (hud.healthSegments[2] != null) hud.healthSegments[2].color = new Color(0.55f, 0.20f, 0.20f);
+                for (var i = 0; i < total; i++)
+                {
+                    var filled = i < remaining;
+
+                    if (hud.healthSegments[i] != null)
+                    {
+                        hud.healthSegments[i].color = new Color(amber.r, amber.g, amber.b, filled ? 1f : 0f);
+                    }
+                    if (hud.healthGlows != null && i < hud.healthGlows.Length && hud.healthGlows[i] != null)
+                    {
+                        hud.healthGlows[i].color = new Color(amber.r, amber.g, amber.b, filled ? 0.40f : 0f);
+                    }
+                    if (hud.healthShells != null && i < hud.healthShells.Length && hud.healthShells[i] != null)
+                    {
+                        hud.healthShells[i].color = filled
+                            ? new Color(0.28f, 0.34f, 0.42f, 0.55f)
+                            : new Color(hostile.r, hostile.g, hostile.b, 0.55f);
+                    }
+                }
+            }
+
+            if (hud.healthReadout != null)
+            {
+                hud.healthReadout.text = remaining.ToString("00");
+                hud.healthReadout.color = amber;
             }
 
             // The scanner unowned, so the dimming that tells the player what they are still
@@ -156,6 +208,7 @@ public static class HUDPreview
             if (hud.heatRoot != null) hud.heatRoot.SetActive(previousHeatActive);
             if (hud.heatFill != null) hud.heatFill.fillAmount = previousFill;
             if (hud.inventoryGroup != null) hud.inventoryGroup.alpha = previousAlpha;
+            if (hud.rootGroup != null) hud.rootGroup.alpha = previousRootAlpha;
             if (minimap != null && minimap.container != null) minimap.container.SetActive(previousMinimapActive);
 
             if (rig != null) Object.DestroyImmediate(rig);

@@ -44,7 +44,10 @@ public class ScanTower : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        if(!itemHolder.IsFirstPerson()|| !itemHolder.IsHoldingScanner())
+        // IsPickingUp() for the same reason GunSystem checks it: the scanner is attached to the
+        // hand a quarter of a second into its animation, so without this the player can start
+        // scanning a tower while still kneeling to pick the scanner up.
+        if(!itemHolder.IsFirstPerson()|| !itemHolder.IsHoldingScanner() || itemHolder.IsPickingUp())
         {
             scannerContainer.SetActive(false);
             SetText(ETA, "");

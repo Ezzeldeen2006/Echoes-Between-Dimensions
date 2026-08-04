@@ -44,18 +44,32 @@ public static class HUDVerify
             Require(problems, hud.gunIcon, "GameHUD.gunIcon");
             Require(problems, hud.scannerIcon, "GameHUD.scannerIcon");
 
-            // The count is checked, not just the array. An Image[0] is not null and would pass
-            // a null check while displaying no health at all.
-            if (hud.healthSegments == null || hud.healthSegments.Length != 3)
+            Require(problems, hud.rootGroup, "GameHUD.rootGroup");
+            Require(problems, hud.healthReadout, "GameHUD.healthReadout");
+
+            /*
+             * The hull readout is three parallel arrays -- cores, sockets and blooms -- and each
+             * is checked for LENGTH as well as for null. An Image[0] is not null and would pass
+             * a null check while displaying no health at all, and an array that is merely
+             * shorter than the others is worse: GameHUD.UpdateHealth guards every index, so a
+             * two-long glow array produces a readout where the third plate silently never
+             * blooms. That is a bug with no error and no crash, visible only by noticing an
+             * absence in one state of one element.
+             */
+            // One plate per hit point. Checking against PlayerHealth rather than against a
+            // literal 3 is the point: the two used to be independent constants, and the whole
+            // failure mode was them drifting apart without anything noticing.
+            var plates = hud.playerHealth != null ? hud.playerHealth.MaxHealth() : 3;
+            RequireLayer(problems, hud.healthSegments, "healthSegments", plates);
+            RequireLayer(problems, hud.healthShells, "healthShells", plates);
+            RequireLayer(problems, hud.healthGlows, "healthGlows", plates);
+
+            // The menu gate. Null is legal in GameHUD -- it means "always visible" -- but in
+            // THIS scene there is a MainMenu, so a null here means the wiring in HUDBuilder
+            // failed and the HUD will sit on top of the title screen.
+            if (Object.FindFirstObjectByType<MainMenu>(FindObjectsInactive.Include) != null)
             {
-                problems.Add($"GameHUD.healthSegments is {(hud.healthSegments == null ? "null" : hud.healthSegments.Length + " long")}, expected 3");
-            }
-            else
-            {
-                for (var i = 0; i < hud.healthSegments.Length; i++)
-                {
-                    Require(problems, hud.healthSegments[i], $"GameHUD.healthSegments[{i}]");
-                }
+                Require(problems, hud.menuPanel, "GameHUD.menuPanel (scene has a MainMenu)");
             }
 
             // fillAmount does nothing on a Simple image. The gauge would sit permanently full
@@ -148,6 +162,21 @@ public static class HUDVerify
         // deliberately here: a reference to a deleted GameObject is exactly as broken as an
         // unassigned one, and this catches both.
         if (value == null) problems.Add(name + " is not assigned");
+    }
+
+    /// <summary>One of the per-plate arrays in the hull readout: one entry per hit point, none null.</summary>
+    static void RequireLayer(List<string> problems, Image[] layer, string name, int plates)
+    {
+        if (layer == null || layer.Length != plates)
+        {
+            problems.Add($"GameHUD.{name} is {(layer == null ? "null" : layer.Length + " long")}, expected {plates}");
+            return;
+        }
+
+        for (var i = 0; i < layer.Length; i++)
+        {
+            Require(problems, layer[i], $"GameHUD.{name}[{i}]");
+        }
     }
 
     static string DescribeCulledLayers(int mask)

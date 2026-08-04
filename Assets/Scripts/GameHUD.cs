@@ -18,8 +18,39 @@ using UnityEngine.UI;
 /// </summary>
 public class GameHUD : MonoBehaviour
 {
+    [Header("Root visibility")]
+    /// <summary>
+    /// The whole HUD, faded out while the main menu is up.
+    ///
+    /// <para>The menu is shown at <c>Start</c> with <c>Time.timeScale = 0</c> and is the pause
+    /// menu as well, so without this the minimap, the hull readout and the heat gauge all sit
+    /// behind it from the moment the game loads -- instrumentation for a game that has not
+    /// begun, on top of the title screen.</para>
+    /// </summary>
+    public CanvasGroup rootGroup;
+
+    /// <summary>
+    /// The menu panel itself, not the <c>MainMenu</c> component.
+    ///
+    /// <para>Its <c>activeSelf</c> IS the game's paused state -- <c>MainMenu</c> drives both
+    /// from the same place -- so reading it needs no new flag and cannot fall out of step with
+    /// one. Watching a bool on <c>MainMenu</c> instead would mean two things to keep in sync.</para>
+    ///
+    /// <para>Null means "always show". That direction of failure is deliberate: a HUD that
+    /// appears a few seconds early is a blemish, a HUD that never appears is the game losing
+    /// its health readout, and an unwired reference should not be able to cause the second one.</para>
+    /// </summary>
+    public GameObject menuPanel;
+
     [Header("Health")]
+    /// <summary>The bright cores. One per hit point; hidden when that point is spent.</summary>
     public Image[] healthSegments;
+    /// <summary>The hatched sockets behind them, always visible, so an empty slot still reads.</summary>
+    public Image[] healthShells;
+    /// <summary>Bloom behind each core. Tinted with the core and faded out with it.</summary>
+    public Image[] healthGlows;
+    /// <summary>The "03" count, which is the part read at a glance from the corner of the eye.</summary>
+    public Text healthReadout;
     public CanvasGroup healthGroup;
 
     [Header("Heat")]
@@ -51,11 +82,46 @@ public class GameHUD : MonoBehaviour
 
     private void Update()
     {
+        // The menu is modal, so nothing behind it should be drawn. Returning early also stops
+        // the damage flash and the critical pulse from advancing while paused, which would
+        // otherwise burn through their animations behind the menu and be over by the time the
+        // player is looking at the game again.
+        if (!UpdateRootVisibility())
+        {
+            return;
+        }
+
         UpdateHealth();
         UpdateHeat();
         UpdateInventory();
     }
 
+    /// <summary>Fades the HUD with the menu. Returns whether the HUD is currently shown.</summary>
+    private bool UpdateRootVisibility()
+    {
+        var menuUp = menuPanel != null && menuPanel.activeInHierarchy;
+
+        if (rootGroup != null)
+        {
+            // unscaledDeltaTime, because the menu sets Time.timeScale to 0 and the fade has to
+            // run while it is up -- with scaled time the HUD would still be at full opacity for
+            // the entire main menu and only snap away on the frame the game unpauses.
+            rootGroup.alpha = Mathf.MoveTowards(rootGroup.alpha, menuUp ? 0f : 1f, Time.unscaledDeltaTime * 6f);
+        }
+
+        return !menuUp;
+    }
+
+    /// <summary>
+    /// The hull readout: three sheared plates, a bloom behind each, and a count.
+    ///
+    /// <para><b>The colour escalates with the remaining plates rather than staying cyan.</b> The
+    /// previous version drew every surviving block in the same colour and let the count carry
+    /// the whole message, which means at two hit points the display looks exactly as calm as it
+    /// does at three -- the player has to notice an absence to learn they are in trouble. A
+    /// plate going amber and then red is a change you catch without looking at it, which is the
+    /// only way a health bar in the corner of the screen is ever actually read.</para>
+    /// </summary>
     private void UpdateHealth()
     {
         if (playerHealth == null || healthSegments == null)
@@ -74,26 +140,56 @@ public class GameHUD : MonoBehaviour
         }
         lastHealth = current;
 
-        damageFlash = Mathf.MoveTowards(damageFlash, 0f, Time.deltaTime * 2.5f);
+        damageFlash = Mathf.MoveTowards(damageFlash, 0f, Time.deltaTime * 2.2f);
+
+        // Escalation by what is LEFT, not by what the maximum is, so it reads the same whether
+        // the player is at 2 of 3 having taken a hit or at 2 of 2 in some later tuning pass.
+        var tint = current >= 3 ? Cool : current == 2 ? Warm : Hot;
 
         for (var i = 0; i < healthSegments.Length; i++)
         {
-            if (healthSegments[i] == null) continue;
-
             var filled = i < current;
-            var colour = filled ? SegmentFull : SegmentEmpty;
+            // The plate that was just spent, which is the one the eye should go to.
+            var justLost = !filled && i == current && damageFlash > 0f;
 
-            // The segment you just lost flashes red as it empties, so the eye is drawn to the
-            // one that changed rather than to the bar as a whole.
-            if (!filled && i == current && damageFlash > 0f)
+            if (healthSegments[i] != null)
             {
-                colour = Color.Lerp(SegmentEmpty, Hot, damageFlash);
+                // The core does not change colour when it empties -- it goes away. An empty
+                // slot is the hatched socket underneath, which is a different shape rather than
+                // the same shape in a darker colour, and shape survives peripheral vision.
+                var core = filled ? tint : Hot;
+                core.a = filled ? 1f : damageFlash;
+                healthSegments[i].color = core;
             }
 
-            healthSegments[i].color = colour;
+            if (healthGlows != null && i < healthGlows.Length && healthGlows[i] != null)
+            {
+                var glow = filled ? tint : Hot;
+                // Brighter as the situation worsens: at one plate the last core is haloed hard.
+                var strength = filled ? (current <= 1 ? 0.42f : current == 2 ? 0.30f : 0.22f) : damageFlash * 0.55f;
+                glow.a = strength;
+                healthGlows[i].color = glow;
+            }
+
+            if (healthShells != null && i < healthShells.Length && healthShells[i] != null)
+            {
+                // A spent socket is hazard-striped in red at low alpha; an occupied one is a
+                // near-invisible frame, because behind a lit plate it is structure, not signal.
+                healthShells[i].color = filled
+                    ? new Color(SegmentEmpty.r, SegmentEmpty.g, SegmentEmpty.b, 0.55f)
+                    : Color.Lerp(new Color(Hot.r, Hot.g, Hot.b, 0.42f), new Color(Hot.r, Hot.g, Hot.b, 0.85f), justLost ? damageFlash : 0f);
+            }
         }
 
-        // On the last block the whole group breathes. This is the one place a permanent
+        if (healthReadout != null)
+        {
+            // Zero-padded so the glyph count never changes. "3" becoming "10" would shift the
+            // whole readout sideways, and a number that moves is a number you re-read.
+            healthReadout.text = Mathf.Max(0, current).ToString("00");
+            healthReadout.color = tint;
+        }
+
+        // On the last plate the whole group breathes. This is the one place a permanent
         // animation earns itself: at one hit from death, the player should feel hunted.
         if (healthGroup != null)
         {

@@ -28,7 +28,22 @@ public class CameraController : MonoBehaviour
     }
     void Update()
     {
-        if (playerActions.Player.SwitchCamera.WasPressedThisFrame())
+        /*
+         * No aiming during a pickup.
+         *
+         * Zooming to first person mid-crouch put the camera inside a character who was still
+         * reaching for the item, and combined with the gun being usable from the attach event
+         * onwards it let the player aim and shoot before the animation had finished. Movement
+         * was already locked for the pickup; the camera was not, which meant "locked" only ever
+         * meant "cannot walk".
+         *
+         * The release branch is deliberately NOT gated. If the button is let go during a pickup
+         * the camera must still return to third person -- otherwise a player who happens to be
+         * holding right-click when they press E is stuck in first person until they press and
+         * release it again.
+         */
+        if (playerActions.Player.SwitchCamera.WasPressedThisFrame()
+            && (item == null || !item.IsPickingUp()))
         {
             FirstPersonMode();
         }

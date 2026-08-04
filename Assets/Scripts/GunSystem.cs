@@ -53,7 +53,20 @@ public class GunSystem : MonoBehaviour
         {
             isOverHeated = false;
         }
-        if(!item.IsFirstPerson()|| !item.IsHoldingGun())
+        /*
+         * `IsPickingUp()` is part of this condition, and it is the fix for being able to shoot
+         * during the pickup animation.
+         *
+         * The item is attached to the hand by an animation event a quarter of a second into a
+         * multi-second clip -- that is when it should visually appear in the hand. But
+         * IsHoldingGun() flips true at that same instant, so for the whole rest of the animation
+         * the player was mid-crouch, still reaching for the weapon, and already able to aim and
+         * fire it. The gun existed before the character had finished picking it up.
+         *
+         * Gating on the pickup rather than on the attach makes "holding it" and "able to use it"
+         * two different things, which is what they always were.
+         */
+        if(!item.IsFirstPerson()|| !item.IsHoldingGun() || item.IsPickingUp())
         {
             gunCrossHair.SetActive(false);
             return;
@@ -75,6 +88,31 @@ public class GunSystem : MonoBehaviour
             }
         }
     }
+    /// <summary>
+    /// Hides the crosshair whenever this script stops running.
+    ///
+    /// <para><b>This is the fix for the crosshair surviving death in first person.</b> The
+    /// crosshair is shown and hidden from Update, and it is the only thing that ever hides it.
+    /// PlayerHealth.Die() sets <c>gunSystem.enabled = false</c> -- so on the frame the player
+    /// dies while aiming, Update had already turned the crosshair ON, and then never ran again
+    /// to turn it off. The reticle stayed floating over the death camera for the rest of the
+    /// run.</para>
+    ///
+    /// <para>Die() already leaves first person and clears the held items before disabling this,
+    /// so one more Update would have hidden it correctly -- the bug is purely that it was
+    /// switched off a frame too early. Fixing it here rather than by reordering Die() is
+    /// deliberate: the invariant is "no gun script running means no gun crosshair", and it
+    /// belongs to the component that owns the crosshair. Reordering would fix today's single
+    /// caller and leave the next one to rediscover this.</para>
+    /// </summary>
+    private void OnDisable()
+    {
+        if (gunCrossHair != null)
+        {
+            gunCrossHair.SetActive(false);
+        }
+    }
+
     private void OnDestroy()
     {
         playerAction.Disable();

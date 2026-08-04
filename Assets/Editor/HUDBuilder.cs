@@ -32,6 +32,9 @@ public static class HUDBuilder
     // light, which is why it reads as "this is your equipment" without a legend.
     static readonly Color Cyan = new Color(0.29f, 0.85f, 0.95f);
     static readonly Color Steel = new Color(0.66f, 0.72f, 0.78f);
+    // The unlit socket behind a hull plate. GameHUD recolours these at runtime; this is only
+    // what they look like in the editor and in the preview render.
+    static readonly Color SteelDim = new Color(0.28f, 0.34f, 0.42f);
     static readonly Color PanelFill = new Color(0.04f, 0.06f, 0.09f, 0.82f);
     static readonly Color Hostile = new Color(0.96f, 0.28f, 0.27f);
 
@@ -65,6 +68,37 @@ public static class HUDBuilder
         hud.playerHealth = player.GetComponent<PlayerHealth>();
         hud.gunSystem = player.GetComponent<GunSystem>();
         hud.itemHolder = player.GetComponent<ItemHolder>();
+
+        /*
+         * Hide the whole HUD while the main menu is up.
+         *
+         * MainMenu shows its panel in Start() with Time.timeScale = 0, so without this the
+         * minimap, the hull plates and the heat gauge are all drawn over the title screen from
+         * the first frame -- instrumentation for a game that has not started. The same panel is
+         * the pause menu, so this covers pausing too, which is the same picture for the same
+         * reason.
+         *
+         * Wired here rather than by hand: this builder is re-run whenever the HUD changes, and
+         * a reference that has to be dragged back into the inspector after every rebuild is one
+         * that will eventually be forgotten.
+         *
+         * Deliberately silent when there is no MainMenu -- GameHUD treats a null panel as
+         * "always visible", and a scene without a menu is a scene where the HUD should simply
+         * always be on, not one where the build should complain.
+         */
+        hud.rootGroup = canvas.gameObject.AddComponent<CanvasGroup>();
+        hud.rootGroup.blocksRaycasts = false;
+        hud.rootGroup.interactable = false;
+
+        var menu = Object.FindFirstObjectByType<MainMenu>(FindObjectsInactive.Include);
+        if (menu != null && menu.mainMenu != null)
+        {
+            hud.menuPanel = menu.mainMenu;
+            // Start hidden, so the first frame is correct rather than one frame of full HUD
+            // followed by a fade. MainMenu.Start() shows the panel, but ordering between the
+            // two is not guaranteed and this does not depend on it.
+            hud.rootGroup.alpha = 0f;
+        }
 
         BuildHealth(canvas, sprites, hud);
         BuildHeat(canvas, sprites, hud);
@@ -130,31 +164,119 @@ public static class HUDBuilder
     /// </summary>
     static void BuildHealth(RectTransform canvas, Sprites sprites, GameHUD hud)
     {
-        var group = Panel(canvas, "Health", new Vector2(0, 0), new Vector2(40, 40), new Vector2(312, 74));
+        const float panelW = 348f;
+        const float panelH = 92f;
+
+        var group = Panel(canvas, "Health", new Vector2(0, 0), new Vector2(40, 40), new Vector2(panelW, panelH));
+
+        // Lighter than the default panel fill. The corner brackets do the framing now, so the
+        // slab behind only has to keep the text legible over a bright part of the scene -- and
+        // a HUD that hides less of the game is a better HUD.
+        var backing = group.GetComponent<Image>();
+        backing.color = new Color(0.03f, 0.05f, 0.08f, 0.55f);
+
         hud.healthGroup = group.gameObject.AddComponent<CanvasGroup>();
         hud.healthGroup.blocksRaycasts = false;
         hud.healthGroup.interactable = false;
 
-        Label(group, "HULL", new Vector2(14, -8), new Vector2(120, 18), 14, Steel, sprites.font);
+        Corner(group, sprites, "BracketTL", new Vector2(0f, 1f), false, false);
+        Corner(group, sprites, "BracketTR", new Vector2(1f, 1f), true, false);
+        Corner(group, sprites, "BracketBL", new Vector2(0f, 0f), false, true);
+        Corner(group, sprites, "BracketBR", new Vector2(1f, 0f), true, true);
 
-        const int count = 3;
-        const float width = 88f;
-        const float gap = 8f;
-        var segments = new Image[count];
+        // "HULL" alone was ambiguous -- it could as easily have labelled the heat gauge above
+        // it. The readout names the quantity.
+        Label(group, "HULL INTEGRITY", new Vector2(18f, -10f), new Vector2(220f, 18f), 14, Steel, sprites.font);
+
+        /*
+         * The count, in large type, right-aligned.
+         *
+         * The plates alone required the player to count three small shapes in peripheral vision
+         * while being shot at. A digit is read without counting, and the two together mean the
+         * display works whether it is glanced at or actually looked at. Right-aligned so the
+         * number sits at a fixed edge rather than drifting with its own width.
+         */
+        var readout = Label(group, "03", new Vector2(panelW - 94f, -6f), new Vector2(76f, 34f), 30, Cyan, sprites.font);
+        readout.alignment = TextAnchor.MiddleRight;
+        hud.healthReadout = readout;
+
+        /*
+         * One plate per hit point, read from PlayerHealth rather than hardcoded.
+         *
+         * It was `const int count = 3`, matching a maxHp that was also hardcoded to 3 in a
+         * private field. Two copies of the same number in two files with no link between them:
+         * raising the player's health left the HUD still drawing three plates, so the readout
+         * quietly stopped describing the thing it was measuring. Deriving it means the two
+         * cannot disagree.
+         *
+         * The plates share a fixed row width, so more hit points means narrower plates rather
+         * than a panel that grows off the side of the screen.
+         */
+        var count = Mathf.Clamp(hud.playerHealth != null ? hud.playerHealth.MaxHealth() : 3, 1, 8);
+
+        const float gap = 10f;
+        const float left = 18f;
+        const float top = -44f;
+        const float rowW = 314f;
+
+        var plateW = (rowW - gap * (count - 1)) / count;
+        const float plateH = 30f;
+
+        var cores = new Image[count];
+        var shells = new Image[count];
+        var glows = new Image[count];
 
         for (var i = 0; i < count; i++)
         {
-            var image = Sprite(group, "Segment" + i, sprites.segment);
-            var rt = image.rectTransform;
-            rt.anchorMin = rt.anchorMax = new Vector2(0, 1);
-            rt.pivot = new Vector2(0, 1);
-            rt.sizeDelta = new Vector2(width, 22);
-            rt.anchoredPosition = new Vector2(14 + i * (width + gap), -32);
-            image.color = Cyan;
-            segments[i] = image;
+            var x = left + i * (plateW + gap);
+
+            /*
+             * Glow, then socket, then core -- in that order, because uGUI draws siblings in
+             * hierarchy order and there is no z-index to fall back on. Built the other way
+             * round the bloom would paint over the plate it is supposed to sit behind, which
+             * looks like a wash of colour rather than a lit object.
+             */
+            var glow = Sprite(group, "PlateGlow" + i, sprites.plateGlow);
+            // Offset so the bloom is CENTRED on its plate: the rect is 36 wider and 32 taller,
+            // so half of each goes above and to the left. Kept smaller than the 10px gap
+            // between plates so two neighbouring glows cannot meet in the middle.
+            Place(glow.rectTransform, new Vector2(x - 18f, top + 16f), new Vector2(plateW + 36f, plateH + 32f));
+            glow.color = new Color(Cyan.r, Cyan.g, Cyan.b, 0.22f);
+            glows[i] = glow;
+
+            var shell = Sprite(group, "PlateSocket" + i, sprites.plateHatch);
+            Place(shell.rectTransform, new Vector2(x, top), new Vector2(plateW, plateH));
+            shell.color = new Color(SteelDim.r, SteelDim.g, SteelDim.b, 0.55f);
+            shells[i] = shell;
+
+            var core = Sprite(group, "Plate" + i, sprites.plate);
+            Place(core.rectTransform, new Vector2(x, top), new Vector2(plateW, plateH));
+            core.color = Cyan;
+            cores[i] = core;
         }
 
-        hud.healthSegments = segments;
+        hud.healthSegments = cores;
+        hud.healthShells = shells;
+        hud.healthGlows = glows;
+    }
+
+    /// <summary>
+    /// One corner bracket, mirrored into place.
+    ///
+    /// <para>Mirroring with a negative localScale rather than rotating: the pivot is already in
+    /// the corner the art belongs to, so a flip about it lands correctly, whereas a 90-degree
+    /// rotation would also need the pivot moved for each corner and is three more chances to
+    /// get one of them subtly wrong.</para>
+    /// </summary>
+    static void Corner(RectTransform parent, Sprites sprites, string name, Vector2 anchor, bool flipX, bool flipY)
+    {
+        var image = Sprite(parent, name, sprites.bracket);
+        var rt = image.rectTransform;
+        rt.anchorMin = rt.anchorMax = rt.pivot = anchor;
+        rt.anchoredPosition = Vector2.zero;
+        rt.sizeDelta = new Vector2(26f, 26f);
+        rt.localScale = new Vector3(flipX ? -1f : 1f, flipY ? -1f : 1f, 1f);
+        image.color = new Color(Cyan.r, Cyan.g, Cyan.b, 0.75f);
     }
 
     // ---------------------------------------------------------------------------------
@@ -163,26 +285,58 @@ public static class HUDBuilder
 
     static void BuildHeat(RectTransform canvas, Sprites sprites, GameHUD hud)
     {
-        var group = Panel(canvas, "Heat", new Vector2(0, 0), new Vector2(40, 124), new Vector2(312, 60));
+        /*
+         * Sits directly above the hull readout, and the two must not touch.
+         *
+         * The hull panel is 92 tall anchored 40 from the bottom, so it occupies 40..132. This
+         * one was anchored at 124, which put its bottom edge eight pixels INSIDE the hull panel
+         * -- the corner bracket drew over the heat gauge's border and the two instruments read
+         * as one damaged box. Anchoring at 148 leaves a 16px gutter. Worth stating in numbers
+         * rather than nudging until it looks right, because the next change to either panel's
+         * height has to redo this sum.
+         */
+        var group = Panel(canvas, "Heat", new Vector2(0, 0), new Vector2(40, 156), new Vector2(348, 64));
         hud.heatRoot = group.gameObject;
 
-        hud.heatLabel = Label(group, "HEAT", new Vector2(14, -8), new Vector2(180, 18), 14, Steel, sprites.font);
+        // Matched to the hull panel so the pair reads as one instrument cluster rather than as
+        // two widgets that happen to be near each other.
+        group.GetComponent<Image>().color = new Color(0.03f, 0.05f, 0.08f, 0.55f);
+
+        /*
+         * No corner brackets here, deliberately, and this is a hierarchy decision rather than a
+         * saving.
+         *
+         * Bracketing both panels put two sets of corner marks within a few pixels of each other
+         * across the gutter, and the four of them read as one broken glyph instead of as two
+         * frames -- more ink in the busiest part of the cluster, saying nothing. Framing only
+         * the hull readout makes it the primary instrument and leaves heat as the secondary one
+         * attached above it, which is also the true relative importance: running hot costs you
+         * a few seconds, running out of hull ends the run.
+         */
+
+        hud.heatLabel = Label(group, "HEAT", new Vector2(18, -10), new Vector2(200, 18), 14, Steel, sprites.font);
 
         // The track the fill runs along, so an empty gauge still reads as a gauge rather than
         // as nothing at all.
-        var track = Sprite(group, "Track", sprites.segment);
-        Place(track.rectTransform, new Vector2(14, -32), new Vector2(284, 16));
+        //
+        // Sheared, like the hull plates. It was the old chamfered `segment` sprite, which left
+        // the two halves of the same cluster drawn in two different shape languages -- rounded
+        // above, slanted below -- and made the redesign look half-finished rather than
+        // deliberate. The gauge empties horizontally against slanted ends, which is the shape
+        // this genre uses for exactly this readout.
+        var track = Sprite(group, "Track", sprites.plate);
+        Place(track.rectTransform, new Vector2(18, -36), new Vector2(312, 18));
         track.color = new Color(0.10f, 0.13f, 0.17f, 0.95f);
 
         // Behind the fill and slightly larger: the bleed of a hot component, not a UI border.
         var glow = Sprite(group, "Glow", sprites.glow);
-        Place(glow.rectTransform, new Vector2(6, -24), new Vector2(300, 32));
+        Place(glow.rectTransform, new Vector2(10, -28), new Vector2(328, 34));
         glow.color = new Color(1f, 1f, 1f, 0f);
         glow.raycastTarget = false;
         hud.heatGlow = glow;
 
-        var fill = Sprite(group, "Fill", sprites.segment);
-        Place(fill.rectTransform, new Vector2(14, -32), new Vector2(284, 16));
+        var fill = Sprite(group, "Fill", sprites.plate);
+        Place(fill.rectTransform, new Vector2(18, -36), new Vector2(312, 18));
         // Filled/Horizontal is what makes fillAmount mean anything. Left as Simple, the image
         // would ignore fillAmount entirely and the gauge would be permanently full -- a bug
         // that looks like "the heat system does not work" rather than like a UI setting.
@@ -467,6 +621,7 @@ public static class HUDBuilder
     struct Sprites
     {
         public Sprite segment, circle, ring, dot, glow, slot, gun, scanner;
+        public Sprite plate, plateHatch, plateGlow, bracket;
         public Font font;
     }
 
@@ -494,6 +649,14 @@ public static class HUDBuilder
             slot = Save("slot", 128, 128, DrawSlot),
             gun = Save("icon_gun", 128, 128, DrawGun),
             scanner = Save("icon_scanner", 128, 128, DrawScanner),
+            // The hull readout. Drawn at roughly 1.3x the size they are shown at, so the
+            // sheared edges land on a downscale rather than being stretched up into stair-steps.
+            plate = Save("plate", 132, 40, DrawPlate),
+            plateHatch = Save("plate_hatch", 132, 40, DrawPlateHatch),
+            // Deliberately larger than the plate: the bloom has to have somewhere to go, and a
+            // glow the same size as the thing it surrounds is just a second copy of it.
+            plateGlow = Save("plate_glow", 196, 104, DrawPlateGlow),
+            bracket = Save("bracket", 64, 64, DrawBracket),
             // The built-in font. Legacy UI Text needs a Font, and this project ships no .ttf
             // that is imported as one -- the TextMesh Pro files are SDF assets, a different
             // type that a Text component cannot use.
@@ -544,6 +707,145 @@ public static class HUDBuilder
         importer.SaveAndReimport();
 
         return AssetDatabase.LoadAssetAtPath<Sprite>(path);
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Hull plates
+    //
+    // The shape is a SHEARED PARALLELOGRAM, and that is the whole idea. The readout this
+    // replaced was three rounded-end pills in flat cyan on a rounded dark panel, which is the
+    // house style of a mobile game -- soft, symmetrical, no direction. The shape vocabulary of
+    // this genre is the opposite of that: everything is cut on a slant, corners are notched
+    // rather than rounded, and lit elements bleed rather than sitting flat. A slanted plate
+    // reads as machined metal at a glance, and a rounded pill does not, and the difference is
+    // in the silhouette rather than in the colour -- which is why recolouring the old pills
+    // would not have fixed the complaint.
+    //
+    // The shear is a constant across all three sprites so the core, its socket and its bloom
+    // are the same shape and stay registered when they are drawn on top of each other.
+    // ---------------------------------------------------------------------------------
+
+    const float PlateShear = 15f;
+
+    /// <summary>
+    /// How far inside the plate a point is, in pixels. Positive inside, negative outside.
+    ///
+    /// <para>One function for the fill, the socket and the bloom, so the three cannot drift
+    /// apart -- a bloom that does not line up with its plate is the sort of thing that only
+    /// shows once it is on screen and then looks like a rendering fault.</para>
+    /// </summary>
+    static float PlateDepth(float cx, float cy, int w, int h, float pad)
+    {
+        var bottom = pad;
+        var top = h - 1 - pad;
+        var t = top - bottom < 1f ? 0f : (cy - bottom) / (top - bottom);
+
+        // Left and right edges both slide right as they rise, which keeps the width constant.
+        var x0 = pad + PlateShear * t;
+        var x1 = w - pad - PlateShear + PlateShear * t;
+
+        return Mathf.Min(Mathf.Min(cx - x0, x1 - cx), Mathf.Min(cy - bottom, top - cy));
+    }
+
+    /// <summary>The lit plate: one hit point the player still has.</summary>
+    static void DrawPlate(Color[] p, int w, int h)
+    {
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                // +0.5 puts the edge on the pixel boundary rather than its centre, giving one
+                // pixel of coverage-based antialiasing. Without it the slanted edges alias into
+                // visible stair-steps, which is exactly what makes a shape look cheap.
+                var a = Mathf.Clamp01(PlateDepth(x + 0.5f, y + 0.5f, w, h, 0f) + 0.5f);
+
+                // A brighter band along the bottom third: a plate lit from below reads as having
+                // thickness, where a flat fill reads as a coloured rectangle.
+                var lift = 1f - Mathf.Clamp01((float)y / (h * 0.55f));
+                var v = 0.82f + 0.18f * lift;
+
+                p[y * w + x] = new Color(v, v, v, a);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The empty socket, hazard-striped.
+    ///
+    /// <para>A spent hit point is drawn as a DIFFERENT SHAPE rather than as the same shape in a
+    /// darker colour. Health in the corner of the screen is read peripherally, and peripheral
+    /// vision resolves shape and motion long before it resolves hue -- three cyan blocks and
+    /// two cyan blocks plus one grey one are nearly the same image, whereas a lit plate and a
+    /// striped hole are not.</para>
+    /// </summary>
+    static void DrawPlateHatch(Color[] p, int w, int h)
+    {
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var outer = Mathf.Clamp01(PlateDepth(x + 0.5f, y + 0.5f, w, h, 0f) + 0.5f);
+                var inner = Mathf.Clamp01(PlateDepth(x + 0.5f, y + 0.5f, w, h, 3f) + 0.5f);
+
+                // The frame is the difference between the shape and the shape inset by 3px,
+                // which gives a constant-width outline that follows the slant automatically.
+                var border = Mathf.Clamp01(outer - inner);
+
+                // x + y is a 45-degree stripe. It runs the opposite way to the plate's own
+                // shear on purpose -- parallel stripes would read as part of the edge.
+                var stripe = (x + y) % 14 < 4 ? 1f : 0f;
+
+                p[y * w + x] = new Color(1f, 1f, 1f, Mathf.Max(border, inner * (0.14f + 0.34f * stripe)));
+            }
+        }
+    }
+
+    /// <summary>The bloom behind a lit plate.</summary>
+    static void DrawPlateGlow(Color[] p, int w, int h)
+    {
+        // The plate sits inset inside this larger sprite; the padding is the room the falloff
+        // has to fade out in.
+        const float pad = 38f;
+        // Tightened from 30. At 30 the bloom reached far enough past its plate that adjacent
+        // plates' glows met in the gap between them and summed into a bright vertical smear --
+        // three lit plates read as one blurry amber bar, which is the opposite of the countable
+        // readout the whole design is for. A glow should say "this is lit", not join things up.
+        const float spread = 20f;
+
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var d = PlateDepth(x + 0.5f, y + 0.5f, w, h, pad);
+                var a = Mathf.Clamp01((d + spread) / spread);
+                // Squared, twice: a linear falloff looks like a grey box with soft edges, and
+                // what is wanted is something tight around the plate that dies off fast.
+                a *= a;
+                a *= a;
+                p[y * w + x] = new Color(1f, 1f, 1f, a * 0.9f);
+            }
+        }
+    }
+
+    /// <summary>
+    /// One corner bracket, drawn in the top-left orientation.
+    ///
+    /// <para>Four of these replace the filled panel the readout used to sit on. A solid slab
+    /// behind a HUD element is a background; brackets are a frame, and a frame says "this is an
+    /// instrument" while taking almost no pixels and hiding none of the game. The other three
+    /// corners are this same sprite mirrored on one or both axes, so the geometry is authored
+    /// once and cannot end up subtly different in one corner.</para>
+    /// </summary>
+    static void DrawBracket(Color[] p, int w, int h)
+    {
+        Clear(p);
+
+        const int thick = 5;
+        const int arm = 34;
+
+        // y is measured from the bottom in a Color[] passed to SetPixels, so "top" is h - thick.
+        Rect(p, w, h, 0, h - thick, arm, thick);
+        Rect(p, w, h, 0, h - arm, thick, arm);
     }
 
     /// <summary>A block with cut corners on the right -- the instrumentation read, not a bar.</summary>
